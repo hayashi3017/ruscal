@@ -2,14 +2,16 @@
 enum Token {
     Ident,
     Number,
+    LParen,
+    RParen,
 }
 
 fn main() {
-    let input = "123 world";
+    let input = "(123 456 world)";
     println!("source: {}, parsed: {:?}", input, source(input));
-    let input = "Hello world";
+    let input = "((car cdr) cdr)";
     println!("source: {}, parsed: {:?}", input, source(input));
-    let input = "     world";
+    let input = "()())))((()))";
     println!("source: {}, parsed: {:?}", input, source(input));
 }
 
@@ -33,6 +35,14 @@ fn token(i: &str) -> (&str, Option<Token>) {
 
     if let (i, Some(number_res)) = number(whitespace(i)) {
         return (i, Some(number_res));
+    }
+
+    if let (i, Some(lparen_res)) = lparen(whitespace(i)) {
+        return (i, Some(lparen_res));
+    }
+
+    if let (i, Some(rparen_res)) = rparen(whitespace(i)) {
+        return (i, Some(rparen_res));
     }
 
     (i, None)
@@ -65,6 +75,24 @@ fn number(mut input: &str) -> (&str, Option<Token>) {
             input = advance_char(input);
         }
         (input, Some(Token::Number))
+    } else {
+        (input, None)
+    }
+}
+
+fn lparen(mut input: &str) -> (&str, Option<Token>) {
+    if matches!(peek_char(input), Some('(')) {
+        input = advance_char(input);
+        (input, Some(Token::LParen))
+    } else {
+        (input, None)
+    }
+}
+
+fn rparen(mut input: &str) -> (&str, Option<Token>) {
+    if matches!(peek_char(input), Some(')')) {
+        input = advance_char(input);
+        (input, Some(Token::RParen))
     } else {
         (input, None)
     }
