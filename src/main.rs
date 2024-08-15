@@ -3,10 +3,11 @@ use nom::{
     bytes::complete::tag,
     character::complete::{alpha1, alphanumeric1, char, multispace0},
     combinator::recognize,
-    multi::{fold_many0, many0},
+    error::ParseError,
+    multi::{self, fold_many0, many0},
     number::complete::recognize_float,
     sequence::{delimited, pair},
-    IResult,
+    IResult, Parser,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -30,16 +31,16 @@ fn main() {
     }
     let input = "123";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-  
+
     let input = "2 * pi";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-  
+
     let input = "(123 + 456 ) + pi";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-  
+
     let input = "10 - (100 + 1)";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-  
+
     let input = "(3 + 7) / (2 + 3)";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 }
@@ -60,10 +61,7 @@ fn expr(i: &str) -> IResult<&str, Expression> {
     let (i, init) = term(i)?;
 
     fold_many0(
-        pair(
-            delimited(multispace0, alt((char('+'), char('-'))), multispace0),
-            term,
-        ),
+        pair(space_delimited(alt((char('+'), char('-')))), term),
         move || init.clone(),
         |acc, (op, val)| match op {
             '+' => Expression::Add(Box::new(acc), Box::new(val)),
@@ -74,13 +72,10 @@ fn expr(i: &str) -> IResult<&str, Expression> {
 }
 
 fn term(i: &str) -> IResult<&str, Expression> {
-    let (i, init) = alt((number, ident, parens))(i)?;
+    let (i, init) = factor(i)?;
 
     fold_many0(
-        pair(
-            delimited(multispace0, alt((char('*'), char('/'))), multispace0),
-            alt((number, ident, parens)),
-        ),
+        pair(space_delimited(alt((char('*'), char('/')))), factor),
         move || init.clone(),
         |acc, (op, val)| match op {
             '*' => Expression::Mul(Box::new(acc), Box::new(val)),
@@ -88,6 +83,19 @@ fn term(i: &str) -> IResult<&str, Expression> {
             _ => panic!("Multiplicative expression should have '*' or '/' operator"),
         },
     )(i)
+}
+
+fn space_delimited<'src, O, E>(
+    f: impl Parser<&'src str, O, E>,
+) -> impl FnMut(&'src str) -> IResult<&'src str, O, E>
+where
+    E: ParseError<&'src str>,
+{
+    delimited(multispace0, f, multispace0)
+}
+
+fn factor(i: &str) -> IResult<&str, Expression> {
+    alt((number, ident, parens))(i)
 }
 
 fn parens(i: &str) -> IResult<&str, Expression> {
@@ -98,8 +106,8 @@ fn parens(i: &str) -> IResult<&str, Expression> {
     )(i)
 }
 
-fn ident(mut input: &str) -> IResult<&str, Expression> {
-    let (r, res) = delimited(multispace0, identifier, multispace0)(input)?;
+fn ident(input: &str) -> IResult<&str, Expression> {
+    let (r, res) = space_delimited(identifier)(input)?;
     Ok((r, Expression::Value(Token::Ident(res))))
 }
 
@@ -111,7 +119,7 @@ fn identifier(input: &str) -> IResult<&str, &str> {
 }
 
 fn number(input: &str) -> IResult<&str, Expression> {
-    let (r, v) = delimited(multispace0, recognize_float, multispace0)(input)?;
+    let (r, v) = space_delimited(recognize_float)(input)?;
     Ok((
         r,
         Expression::Value(Token::Number(v.parse().map_err(|_| {
