@@ -1,5 +1,3 @@
-use std::slice::RChunks;
-
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -21,6 +19,9 @@ enum Token<'src> {
 enum Expression<'src> {
     Value(Token<'src>),
     Add(Box<Expression<'src>>, Box<Expression<'src>>),
+    Sub(Box<Expression<'src>>, Box<Expression<'src>>),
+    Mul(Box<Expression<'src>>, Box<Expression<'src>>),
+    Div(Box<Expression<'src>>, Box<Expression<'src>>),
 }
 
 fn main() {
@@ -29,14 +30,17 @@ fn main() {
     }
     let input = "123";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-
+  
+    let input = "2 * pi";
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
+  
     let input = "(123 + 456 ) + pi";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-
-    let input = "10 + (100 + 1)";
+  
+    let input = "10 - (100 + 1)";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
-
-    let input = "((1 + 2) + (3 + 4)) + 5 + 6";
+  
+    let input = "(3 + 7) / (2 + 3)";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 }
 
@@ -46,6 +50,9 @@ fn eval(expr: Expression) -> f64 {
         Expression::Value(Token::Ident(id)) => panic!("Unknown name {:?}", id),
         Expression::Value(Token::Number(n)) => n,
         Expression::Add(lhs, rhs) => eval(*lhs) + eval(*rhs),
+        Expression::Sub(lhs, rhs) => eval(*lhs) - eval(*rhs),
+        Expression::Mul(lhs, rhs) => eval(*lhs) * eval(*rhs),
+        Expression::Div(lhs, rhs) => eval(*lhs) / eval(*rhs),
     }
 }
 
@@ -53,14 +60,34 @@ fn expr(i: &str) -> IResult<&str, Expression> {
     let (i, init) = term(i)?;
 
     fold_many0(
-        pair(delimited(multispace0, char('+'), multispace0), term),
+        pair(
+            delimited(multispace0, alt((char('+'), char('-'))), multispace0),
+            term,
+        ),
         move || init.clone(),
-        |acc, (_op, val)| Expression::Add(Box::new(acc), Box::new(val)),
+        |acc, (op, val)| match op {
+            '+' => Expression::Add(Box::new(acc), Box::new(val)),
+            '-' => Expression::Sub(Box::new(acc), Box::new(val)),
+            _ => panic!("Additive expression should have '+' or '-' operator"),
+        },
     )(i)
 }
 
 fn term(i: &str) -> IResult<&str, Expression> {
-    alt((number, ident, parens))(i)
+    let (i, init) = alt((number, ident, parens))(i)?;
+
+    fold_many0(
+        pair(
+            delimited(multispace0, alt((char('*'), char('/'))), multispace0),
+            alt((number, ident, parens)),
+        ),
+        move || init.clone(),
+        |acc, (op, val)| match op {
+            '*' => Expression::Mul(Box::new(acc), Box::new(val)),
+            '/' => Expression::Div(Box::new(acc), Box::new(val)),
+            _ => panic!("Multiplicative expression should have '*' or '/' operator"),
+        },
+    )(i)
 }
 
 fn parens(i: &str) -> IResult<&str, Expression> {
