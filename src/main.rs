@@ -1,3 +1,5 @@
+use std::slice::RChunks;
+
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -22,20 +24,29 @@ enum Expression<'src> {
 }
 
 fn main() {
+    fn ex_eval<'src>(input: &'src str) -> Result<f64, nom::Err<nom::error::Error<&'src str>>> {
+        expr(input).map(|(_, e)| eval(e))
+    }
     let input = "123";
-    println!("source: {:?}, parsed: {:?}", input, expr(input));
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 
-    let input = "Hello + world";
-    println!("source: {:?}, parsed: {:?}", input, expr(input));
+    let input = "(123 + 456 ) + pi";
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 
-    let input = "(123 + 456 ) + world";
-    println!("source: {:?}, parsed: {:?}", input, expr(input));
-
-    let input = "car + cdr + cdr";
-    println!("source: {:?}, parsed: {:?}", input, expr(input));
+    let input = "10 + (100 + 1)";
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 
     let input = "((1 + 2) + (3 + 4)) + 5 + 6";
-    println!("source: {:?}, parsed: {:?}", input, expr(input));
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
+}
+
+fn eval(expr: Expression) -> f64 {
+    match expr {
+        Expression::Value(Token::Ident("pi")) => std::f64::consts::PI,
+        Expression::Value(Token::Ident(id)) => panic!("Unknown name {:?}", id),
+        Expression::Value(Token::Number(n)) => n,
+        Expression::Add(lhs, rhs) => eval(*lhs) + eval(*rhs),
+    }
 }
 
 fn expr(i: &str) -> IResult<&str, Expression> {
