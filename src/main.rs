@@ -2,23 +2,19 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, alphanumeric1, char, multispace0},
-    combinator::recognize,
+    combinator::{opt, recognize},
     error::ParseError,
-    multi::{self, fold_many0, many0},
+    multi::{fold_many0, many0},
     number::complete::recognize_float,
     sequence::{delimited, pair},
     IResult, Parser,
 };
 
 #[derive(Debug, PartialEq, Clone)]
-enum Token<'src> {
-    Ident(&'src str),
-    Number(f64),
-}
-
-#[derive(Debug, PartialEq, Clone)]
 enum Expression<'src> {
-    Value(Token<'src>),
+    Ident(&'src str),
+    NumLiteral(f64),
+    FnInvoke(&'src str, Vec<Expression<'src>>),
     Add(Box<Expression<'src>>, Box<Expression<'src>>),
     Sub(Box<Expression<'src>>, Box<Expression<'src>>),
     Mul(Box<Expression<'src>>, Box<Expression<'src>>),
@@ -29,6 +25,7 @@ fn main() {
     fn ex_eval<'src>(input: &'src str) -> Result<f64, nom::Err<nom::error::Error<&'src str>>> {
         expr(input).map(|(_, e)| eval(e))
     }
+
     let input = "123";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 
@@ -43,17 +40,59 @@ fn main() {
 
     let input = "(3 + 7) / (2 + 3)";
     println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
+
+    let input = "sqrt(2) / 2";
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
+
+    let input = "sin(pi / 4)";
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
+
+    let input = "atan2(1, 1)";
+    println!("source: {:?}, parsed: {:?}", input, ex_eval(input));
 }
 
 fn eval(expr: Expression) -> f64 {
+    use Expression::*;
     match expr {
-        Expression::Value(Token::Ident("pi")) => std::f64::consts::PI,
-        Expression::Value(Token::Ident(id)) => panic!("Unknown name {:?}", id),
-        Expression::Value(Token::Number(n)) => n,
-        Expression::Add(lhs, rhs) => eval(*lhs) + eval(*rhs),
-        Expression::Sub(lhs, rhs) => eval(*lhs) - eval(*rhs),
-        Expression::Mul(lhs, rhs) => eval(*lhs) * eval(*rhs),
-        Expression::Div(lhs, rhs) => eval(*lhs) / eval(*rhs),
+        Ident("pi") => std::f64::consts::PI,
+        Ident(id) => panic!("Unknown name {:?}", id),
+        NumLiteral(n) => n,
+        FnInvoke("sqrt", args) => unary_fn(f64::sqrt)(args),
+        FnInvoke("sin", args) => unary_fn(f64::sin)(args),
+        FnInvoke("cos", args) => unary_fn(f64::cos)(args),
+        FnInvoke("tan", args) => unary_fn(f64::tan)(args),
+        FnInvoke("asin", args) => unary_fn(f64::asin)(args),
+        FnInvoke("acos", args) => unary_fn(f64::acos)(args),
+        FnInvoke("atan", args) => unary_fn(f64::atan)(args),
+        FnInvoke("atan2", args) => binary_fn(f64::atan2)(args),
+        FnInvoke("pow", args) => binary_fn(f64::powf)(args),
+        FnInvoke("exp", args) => unary_fn(f64::exp)(args),
+        FnInvoke("log", args) => binary_fn(f64::log)(args),
+        FnInvoke("log10", args) => unary_fn(f64::log10)(args),
+        FnInvoke(name, _) => {
+            panic!("Unknown function {name:?}")
+        }
+        Add(lhs, rhs) => eval(*lhs) + eval(*rhs),
+        Sub(lhs, rhs) => eval(*lhs) - eval(*rhs),
+        Mul(lhs, rhs) => eval(*lhs) * eval(*rhs),
+        Div(lhs, rhs) => eval(*lhs) / eval(*rhs),
+    }
+}
+
+fn unary_fn(f: fn(f64) -> f64) -> impl Fn(Vec<Expression>) -> f64 {
+    move |args| {
+        f(eval(
+            args.into_iter().next().expect("function missing argument"),
+        ))
+    }
+}
+
+fn binary_fn(f: fn(f64, f64) -> f64) -> impl Fn(Vec<Expression>) -> f64 {
+    move |args| {
+        let mut args = args.into_iter();
+        let lhs = eval(args.next().expect("function missing the first argument"));
+        let rhs = eval(args.next().expect("function missing the second argument"));
+        f(lhs, rhs)
     }
 }
 
@@ -95,7 +134,17 @@ where
 }
 
 fn factor(i: &str) -> IResult<&str, Expression> {
-    alt((number, ident, parens))(i)
+    alt((number, func_call, ident, parens))(i)
+}
+
+fn func_call(i: &str) -> IResult<&str, Expression> {
+    let (r, ident) = space_delimited(identifier)(i)?;
+    let (r, args) = space_delimited(delimited(
+        tag("("),
+        many0(delimited(multispace0, expr, space_delimited(opt(tag(","))))),
+        tag(")"),
+    ))(r)?;
+    Ok((r, Expression::FnInvoke(ident, args)))
 }
 
 fn parens(i: &str) -> IResult<&str, Expression> {
@@ -108,7 +157,7 @@ fn parens(i: &str) -> IResult<&str, Expression> {
 
 fn ident(input: &str) -> IResult<&str, Expression> {
     let (r, res) = space_delimited(identifier)(input)?;
-    Ok((r, Expression::Value(Token::Ident(res))))
+    Ok((r, Expression::Ident(res)))
 }
 
 fn identifier(input: &str) -> IResult<&str, &str> {
@@ -122,12 +171,12 @@ fn number(input: &str) -> IResult<&str, Expression> {
     let (r, v) = space_delimited(recognize_float)(input)?;
     Ok((
         r,
-        Expression::Value(Token::Number(v.parse().map_err(|_| {
+        Expression::NumLiteral(v.parse().map_err(|_| {
             nom::Err::Error(nom::error::Error {
                 input,
                 code: nom::error::ErrorKind::Digit,
             })
-        })?)),
+        })?),
     ))
 }
 
@@ -137,17 +186,11 @@ mod test {
 
     #[test]
     fn test_ident() {
-        assert_eq!(
-            ident("Adam"),
-            Ok(("", Expression::Value(Token::Ident("Adam"))))
-        );
+        assert_eq!(ident("Adam"), Ok(("", Expression::Ident("Adam"))));
     }
 
     #[test]
     fn test_number() {
-        assert_eq!(
-            number("123.45 "),
-            Ok(("", Expression::Value(Token::Number(123.45))))
-        );
+        assert_eq!(number("123.45 "), Ok(("", Expression::NumLiteral(123.45))));
     }
 }
